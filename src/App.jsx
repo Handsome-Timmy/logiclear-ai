@@ -1,247 +1,1034 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
-  FileText, AlertTriangle, ShieldCheck, 
-  Upload, Copy, Check, DollarSign, BarChart3, Truck 
+  FileText, 
+  UploadCloud, 
+  AlertTriangle, 
+  CheckCircle2, 
+  XCircle, 
+  Copy, 
+  Check, 
+  ArrowRight, 
+  RefreshCw, 
+  ShieldCheck, 
+  FileCheck
 } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('audit');
-  const [copied, setCopied] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState('');
-  const [actionNotice, setActionNotice] = useState('');
+  const [activeTab, setActiveTab] = useState('audit'); // 'audit' | 'dispute'
+  const [uploadStatus, setUploadStatus] = useState(null); // null | 'uploading' | 'success' | 'error'
+  const [uploadMessage, setUploadMessage] = useState('');
+  const [currentFile, setCurrentFile] = useState(null);
+  const [isDisputeGenerated, setIsDisputeGenerated] = useState(false);
+  const [copiedNotice, setCopiedNotice] = useState(false);
+  const [auditDecision, setAuditDecision] = useState('pending'); // 'pending' | 'approved' | 'disputed'
+  const fileInputRef = useRef(null);
 
-  const [auditData, setAuditData] = useState({
+  // Active load state
+  const [loadData, setLoadData] = useState({
     loadId: 'LC-9482',
     carrier: 'Apex Logistics LLC',
     origin: 'Atlanta, GA',
     destination: 'Dallas, TX',
-    baselineTotal: 2150.00,
-    invoiceTotal: 2425.00,
-    status: 'Pending review',
-    items: [
-      { id: 1, desc: 'Linehaul', rateBase: 1800.00, invoiceBilled: 1800.00, variance: 0, status: 'Within tolerance' },
-      { id: 2, desc: 'Fuel Surcharge', rateBase: 350.00, invoiceBilled: 375.00, variance: 25.00, status: 'Flagged variance' },
-      { id: 3, desc: 'Unapproved Detention', rateBase: 0.00, invoiceBilled: 250.00, variance: 250.00, status: 'Flagged variance' }
+    charges: [
+      { id: 1, name: 'Linehaul', contract: 1800.0, billed: 1800.0, status: 'within_tolerance' },
+      { id: 2, name: 'Fuel Surcharge', contract: 350.0, billed: 375.0, status: 'flagged' },
+      { id: 3, name: 'Unapproved Detention', contract: 0.0, billed: 250.0, status: 'flagged' },
     ]
   });
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
+  const contractTotal = loadData.charges.reduce((acc, curr) => acc + curr.contract, 0);
+  const billedTotal = loadData.charges.reduce((acc, curr) => acc + curr.billed, 0);
+  const varianceTotal = billedTotal - contractTotal;
+  const flaggedCount = loadData.charges.filter(c => c.status === 'flagged').length;
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
     if (!file) return;
-    if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type)) {
-      setUploadStatus('Invalid file format. Please upload PDF, PNG, or JPG.');
+    processSelectedFile(file);
+  };
+
+  const processSelectedFile = (file) => {
+    const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowedTypes.includes(file.type)) {
+      setUploadStatus('error');
+      setUploadMessage(`TC-01 Failed: Unauthorized file format (${file.type || 'unknown'}). Only PDF, PNG, and JPG are accepted.`);
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setUploadStatus('File size exceeds the 5MB limit.');
+
+    const maxSizeBytes = 5 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      setUploadStatus('error');
+      setUploadMessage(`TC-02 Failed: Payload ${(file.size / (1024 * 1024)).toFixed(2)}MB exceeds the 5MB safety limit.`);
       return;
     }
-    setUploadStatus(`Uploaded "${file.name}" successfully. Checked in browser.`);
-    setTimeout(() => setUploadStatus(''), 4000);
+
+    setCurrentFile(file);
+    setUploadStatus('uploading');
+    setUploadMessage(`Ingesting ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`);
+
+    setTimeout(() => {
+      setUploadStatus('success');
+      setUploadMessage(`Successfully parsed ${file.name}. Line items reconciled against contracted baselines.`);
+      setAuditDecision('pending');
+      setIsDisputeGenerated(false);
+    }, 900);
   };
 
-  const handleApprove = () => {
-    setAuditData(prev => ({ ...prev, status: 'Approved' }));
-    setActionNotice('Invoice approved for payment.');
-    setTimeout(() => setActionNotice(''), 3000);
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
-  const handleReject = () => {
-    setAuditData(prev => ({ ...prev, status: 'Disputed' }));
-    setActionNotice('Dispute generated. Audit defense report ready.');
-    setTimeout(() => setActionNotice(''), 3000);
+  const handleGenerateDispute = () => {
+    setIsDisputeGenerated(true);
+    setAuditDecision('disputed');
+    setActiveTab('dispute');
   };
 
-  const defenseLetter = `CARRIER BILLING DISPUTE NOTICE
-Load ID: ${auditData.loadId}
-Carrier: ${auditData.carrier}
-Agreed Contract Total: $${auditData.baselineTotal.toFixed(2)}
-Billed Invoice Total: $${auditData.invoiceTotal.toFixed(2)}
-Net Discrepancy: $${(auditData.invoiceTotal - auditData.baselineTotal).toFixed(2)}
+  const handleApproveInvoice = () => {
+    setAuditDecision('approved');
+  };
 
-Audit Findings:
-1. Fuel Surcharge billed at $375.00 vs contract baseline of $350.00 (+$25.00).
-2. Unapproved Detention billed at $250.00: No contract rate authorized.
+  const handleCopyNotice = () => {
+    const noticeText = `DISPUTE DEFENSE NOTICE - CONTRACT RATE VARIANCE
+Load Identifier: ${loadData.loadId}
+Carrier: ${loadData.carrier}
+Routing: ${loadData.origin} to ${loadData.destination}
+Agreed Contract Baseline: $${contractTotal.toFixed(2)}
+Carrier Invoiced Total: $${billedTotal.toFixed(2)}
+Net Discrepancy Flagged: +$${varianceTotal.toFixed(2)}
 
-Action Required: Please remit a revised invoice reflecting the contracted balance of $${auditData.baselineTotal.toFixed(2)}.`;
+ITEMIZED VARIANCE DETAILS:
+- Fuel Surcharge: Agreed $${loadData.charges[1].contract.toFixed(2)} vs Billed $${loadData.charges[1].billed.toFixed(2)} (+$${(loadData.charges[1].billed - loadData.charges[1].contract).toFixed(2)} unapproved variance)
+- Detention: Agreed $${loadData.charges[2].contract.toFixed(2)} vs Billed $${loadData.charges[2].billed.toFixed(2)} (+$${(loadData.charges[2].billed - loadData.charges[2].contract).toFixed(2)} unauthorized accessorial)
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(defenseLetter);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+RESOLUTION ACTION:
+Payment approved strictly for the contracted total of $${contractTotal.toFixed(2)}. Invoiced surcharges exceeding 1% baseline variance have been deducted. Please remit corrected billing.`;
+
+    navigator.clipboard.writeText(noticeText);
+    setCopiedNotice(true);
+    setTimeout(() => setCopiedNotice(false), 2500);
   };
 
   return (
-    <div style={{ fontFamily: 'system-ui, -apple-system, sans-serif', backgroundColor: '#f8fafc', minHeight: '100vh', color: '#0f172a' }}>
-      {/* Top Header */}
-      <header style={{ backgroundColor: '#0f172a', color: '#fff', padding: '20px 32px' }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ backgroundColor: '#0284c7', padding: '10px', borderRadius: '10px', display: 'flex' }}>
-              <Truck size={26} color="#fff" />
+    <div style={styles.container}>
+      {/* Header */}
+      <header style={styles.header}>
+        <div style={styles.headerInner}>
+          <div style={styles.brandRow}>
+            <div style={styles.logoBox}>
+              <ShieldCheck size={24} color="#38bdf8" />
             </div>
             <div>
-              <span style={{ fontSize: '0.75rem', letterSpacing: '0.08em', color: '#38bdf8', fontWeight: '700' }}>LOGICLEAR AI</span>
-              <h1 style={{ fontSize: '1.4rem', fontWeight: '800', margin: 0 }}>Automated Freight Audit</h1>
+              <span style={styles.brandSubtitle}>LOGICLEAR AI</span>
+              <h1 style={styles.brandTitle}>Automated Freight Audit &amp; Reconciliation</h1>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <div style={{ backgroundColor: '#1e293b', padding: '10px 18px', borderRadius: '8px', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Loads Audited</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: '700' }}>1,284</div>
+
+          <div style={styles.metricsGroup}>
+            <div style={styles.metricItem}>
+              <span style={styles.metricLabel}>Loads Audited</span>
+              <span style={styles.metricVal}>1,284</span>
             </div>
-            <div style={{ backgroundColor: '#1e293b', padding: '10px 18px', borderRadius: '8px', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Active Discrepancies</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: '700', color: '#facc15' }}>38</div>
+            <div style={styles.metricDivider}></div>
+            <div style={styles.metricItem}>
+              <span style={styles.metricLabel}>Active Discrepancies</span>
+              <span style={{ ...styles.metricVal, color: '#fbbf24' }}>38</span>
             </div>
-            <div style={{ backgroundColor: '#1e293b', padding: '10px 18px', borderRadius: '8px', border: '1px solid #334155' }}>
-              <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>Flagged Variance</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: '700', color: '#f87171' }}>+$275.00</div>
+            <div style={styles.metricDivider}></div>
+            <div style={styles.metricItem}>
+              <span style={styles.metricLabel}>Flagged Variance</span>
+              <span style={{ ...styles.metricVal, color: '#f87171' }}>+$275.00</span>
             </div>
           </div>
         </div>
       </header>
 
       {/* Tabs */}
-      <div style={{ backgroundColor: '#fff', borderBottom: '1px solid #e2e8f0' }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 32px', display: 'flex', gap: '24px' }}>
-          <button 
-            onClick={() => setActiveTab('audit')} 
-            style={{ padding: '14px 4px', border: 'none', background: 'none', borderBottom: activeTab === 'audit' ? '3px solid #0284c7' : '3px solid transparent', color: activeTab === 'audit' ? '#0284c7' : '#64748b', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+      <nav style={styles.tabsBar}>
+        <div style={styles.tabsInner}>
+          <button
+            onClick={() => setActiveTab('audit')}
+            style={{
+              ...styles.tabButton,
+              ...(activeTab === 'audit' ? styles.tabButtonActive : {})
+            }}
           >
+            <FileText size={16} style={{ marginRight: 6 }} />
             Audit Workspace
           </button>
-          <button 
-            onClick={() => setActiveTab('export')} 
-            style={{ padding: '14px 4px', border: 'none', background: 'none', borderBottom: activeTab === 'export' ? '3px solid #0284c7' : '3px solid transparent', color: activeTab === 'export' ? '#0284c7' : '#64748b', fontWeight: '600', cursor: 'pointer', fontSize: '0.95rem' }}
+          <button
+            onClick={() => setActiveTab('dispute')}
+            style={{
+              ...styles.tabButton,
+              ...(activeTab === 'dispute' ? styles.tabButtonActive : {})
+            }}
           >
+            <AlertTriangle size={16} style={{ marginRight: 6 }} />
             Dispute Reports
+            {isDisputeGenerated && <span style={styles.badgeDot}></span>}
           </button>
         </div>
-      </div>
-
-      {actionNotice && (
-        <div style={{ maxWidth: '1200px', margin: '20px auto 0 auto', padding: '12px 20px', backgroundColor: '#e0f2fe', color: '#0369a1', borderRadius: '8px', fontWeight: '600', border: '1px solid #bae6fd' }}>
-          {actionNotice}
-        </div>
-      )}
+      </nav>
 
       {/* Main Content */}
-      <main style={{ maxWidth: '1200px', margin: '24px auto 48px auto', padding: '0 32px' }}>
-        {activeTab === 'audit' ? (
-          <div>
+      <main style={styles.main}>
+        {activeTab === 'audit' && (
+          <div style={styles.columnStack}>
             {/* Load Header Card */}
-            <div style={{ backgroundColor: '#fff', padding: '20px 24px', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+            <div style={styles.cardHeaderBanner}>
               <div>
-                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Load</span>
-                <h2 style={{ fontSize: '1.35rem', fontWeight: '800', margin: '2px 0' }}>{auditData.loadId}</h2>
-                <div style={{ color: '#475569', fontSize: '0.9rem' }}>{auditData.carrier}</div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '0.9rem', color: '#475569', fontWeight: '500' }}>{auditData.origin} to {auditData.destination}</div>
-                <div style={{ marginTop: '6px' }}>
-                  <span style={{ padding: '4px 12px', borderRadius: '9999px', fontSize: '0.8rem', fontWeight: '600', backgroundColor: auditData.status === 'Approved' ? '#dcfce7' : auditData.status === 'Disputed' ? '#fee2e2' : '#fef3c7', color: auditData.status === 'Approved' ? '#15803d' : auditData.status === 'Disputed' ? '#b91c1c' : '#b45309' }}>
-                    {auditData.status}
-                  </span>
+                <span style={styles.loadSub}>ACTIVE AUDIT CANDIDATE</span>
+                <div style={styles.loadMainRow}>
+                  <h2 style={styles.loadTitle}>Load #{loadData.loadId}</h2>
+                  <span style={styles.carrierName}>({loadData.carrier})</span>
                 </div>
+                <div style={styles.routeText}>
+                  Route: <strong>{loadData.origin}</strong> → <strong>{loadData.destination}</strong>
+                </div>
+              </div>
+
+              <div>
+                {auditDecision === 'pending' && (
+                  <span style={styles.statusPillAmber}>
+                    <AlertTriangle size={14} style={{ marginRight: 6 }} />
+                    Review Pending ({flaggedCount} Flagged Items)
+                  </span>
+                )}
+                {auditDecision === 'approved' && (
+                  <span style={styles.statusPillGreen}>
+                    <CheckCircle2 size={14} style={{ marginRight: 6 }} />
+                    Invoice Approved for Payment
+                  </span>
+                )}
+                {auditDecision === 'disputed' && (
+                  <span style={styles.statusPillRed}>
+                    <XCircle size={14} style={{ marginRight: 6 }} />
+                    Dispute Generated (+$275 Deducted)
+                  </span>
+                )}
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
-              {/* Audit Table */}
-              <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                <h3 style={{ fontSize: '1.05rem', fontWeight: '700', margin: '0 0 16px 0' }}>Contract rates vs. billed charges</h3>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.875rem' }}>
+            {/* Split Section: Table on left (65%), Action/Upload on right (35%) */}
+            <div style={styles.splitGrid}>
+              {/* Left: Reconciliation Table */}
+              <div style={styles.card}>
+                <div style={styles.cardHeaderFlex}>
+                  <div>
+                    <h3 style={styles.cardTitle}>Contract Rates vs. Billed Charges</h3>
+                    <p style={styles.cardSubtitle}>Automated 1% variance threshold test against signed rate confirmation</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setAuditDecision('pending');
+                      setIsDisputeGenerated(false);
+                      setUploadStatus(null);
+                    }}
+                    style={styles.resetBtn}
+                  >
+                    <RefreshCw size={13} style={{ marginRight: 4 }} />
+                    Reset View
+                  </button>
+                </div>
+
+                <table style={styles.table}>
                   <thead>
-                    <tr style={{ borderBottom: '1px solid #cbd5e1', color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                      <th style={{ padding: '12px 8px' }}>Charge</th>
-                      <th style={{ padding: '12px 8px' }}>Contract Baseline</th>
-                      <th style={{ padding: '12px 8px' }}>Billed Invoice</th>
-                      <th style={{ padding: '12px 8px' }}>Variance</th>
-                      <th style={{ padding: '12px 8px' }}>Status</th>
+                    <tr style={styles.tableHeaderRow}>
+                      <th style={styles.th}>Charge Description</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Contract Baseline</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Billed Invoice</th>
+                      <th style={{ ...styles.th, textAlign: 'right' }}>Variance</th>
+                      <th style={{ ...styles.th, textAlign: 'center' }}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {auditData.items.map(item => (
-                      <tr key={item.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '14px 8px', fontWeight: '600' }}>{item.desc}</td>
-                        <td style={{ padding: '14px 8px' }}>${item.rateBase.toFixed(2)}</td>
-                        <td style={{ padding: '14px 8px' }}>${item.invoiceBilled.toFixed(2)}</td>
-                        <td style={{ padding: '14px 8px', fontWeight: '600', color: item.variance > 0 ? '#b45309' : '#0f172a' }}>
-                          {item.variance > 0 ? `+$${item.variance.toFixed(2)}` : '$0.00'}
-                        </td>
-                        <td style={{ padding: '14px 8px' }}>
-                          <span style={{ padding: '3px 10px', borderRadius: '9999px', fontSize: '0.75rem', fontWeight: '600', backgroundColor: item.variance > 0 ? '#fef3c7' : '#dcfce7', color: item.variance > 0 ? '#b45309' : '#15803d' }}>
-                            {item.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    <tr style={{ borderTop: '2px solid #cbd5e1', fontWeight: '700' }}>
-                      <td style={{ padding: '14px 8px' }}>Total</td>
-                      <td style={{ padding: '14px 8px' }}>${auditData.baselineTotal.toFixed(2)}</td>
-                      <td style={{ padding: '14px 8px' }}>${auditData.invoiceTotal.toFixed(2)}</td>
-                      <td style={{ padding: '14px 8px', color: '#b45309' }}>+${(auditData.invoiceTotal - auditData.baselineTotal).toFixed(2)}</td>
-                      <td style={{ padding: '14px 8px', fontSize: '0.8rem', color: '#64748b' }}>2 of 3 flagged</td>
-                    </tr>
+                    {loadData.charges.map((charge) => {
+                      const variance = charge.billed - charge.contract;
+                      const isFlagged = charge.status === 'flagged';
+                      return (
+                        <tr key={charge.id} style={styles.tr}>
+                          <td style={styles.tdDesc}>{charge.name}</td>
+                          <td style={styles.tdMono}>${charge.contract.toFixed(2)}</td>
+                          <td style={{ ...styles.tdMono, fontWeight: 'bold' }}>${charge.billed.toFixed(2)}</td>
+                          <td style={{ ...styles.tdMono, color: variance > 0 ? '#fbbf24' : '#94a3b8' }}>
+                            {variance > 0 ? `+$${variance.toFixed(2)}` : '$0.00'}
+                          </td>
+                          <td style={{ ...styles.td, textAlign: 'center' }}>
+                            {isFlagged ? (
+                              <span style={styles.pillSmallAmber}>Flagged Variance</span>
+                            ) : (
+                              <span style={styles.pillSmallGreen}>Within Tolerance</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
+                  <tfoot>
+                    <tr style={styles.tfootRow}>
+                      <td style={styles.tf}>Audited Total</td>
+                      <td style={{ ...styles.tf, textAlign: 'right', color: '#94a3b8' }}>${contractTotal.toFixed(2)}</td>
+                      <td style={{ ...styles.tf, textAlign: 'right' }}>${billedTotal.toFixed(2)}</td>
+                      <td style={{ ...styles.tf, textAlign: 'right', color: '#f87171' }}>+${varianceTotal.toFixed(2)}</td>
+                      <td style={{ ...styles.tf, textAlign: 'center', color: '#fbbf24', fontSize: '11px' }}>
+                        {flaggedCount} of {loadData.charges.length} flagged
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
+
+                <div style={styles.noteBox}>
+                  <AlertTriangle size={16} color="#fbbf24" style={{ marginRight: 8, flexShrink: 0, marginTop: 2 }} />
+                  <span>
+                    Contract stipulation: Fuel surcharges tied to DOE weekly index. Dock detention requires electronic in/out gate stamp prior to billing. Unapproved accessorials are subject to automatic dispute notice.
+                  </span>
+                </div>
               </div>
 
-              {/* Decision & Upload Panel */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                  <h3 style={{ fontSize: '1.05rem', fontWeight: '700', margin: '0 0 8px 0' }}>Decision</h3>
-                  <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '16px' }}>Approve the invoice as billed, or dispute the flagged charges with the carrier.</p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <button onClick={handleApprove} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: '#15803d', color: '#fff', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem' }}>
-                      Approve Invoice
-                    </button>
-                    <button onClick={handleReject} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', backgroundColor: '#b91c1c', color: '#fff', fontWeight: '700', cursor: 'pointer', fontSize: '0.9rem' }}>
-                      Dispute Charges
-                    </button>
+              {/* Right: Upload & Auditor Decision */}
+              <div style={styles.sidebarStack}>
+                {/* 1. Document Upload */}
+                <div style={styles.card}>
+                  <div style={styles.cardHeaderFlex}>
+                    <h3 style={styles.cardTitle}>Supporting Documents</h3>
+                    <span style={styles.ingestTag}>INGESTION</span>
                   </div>
+                  <p style={styles.cardSubtitle}>
+                    Add carrier rate confirmation, BOL, or raw invoice (PDF, PNG, JPG up to 5MB).
+                  </p>
+
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileChange} 
+                    accept=".pdf,.png,.jpg,.jpeg" 
+                    style={{ display: 'none' }} 
+                  />
+
+                  <div 
+                    onClick={triggerFileInput}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) processSelectedFile(file);
+                    }}
+                    style={styles.dropZone}
+                  >
+                    <div style={styles.dropIconBox}>
+                      <UploadCloud size={24} color="#38bdf8" />
+                    </div>
+                    <div style={styles.dropMainText}>Click to upload or drag &amp; drop</div>
+                    <div style={styles.dropSubText}>PDF, PNG, JPG (Max 5MB)</div>
+                  </div>
+
+                  {uploadStatus === 'uploading' && (
+                    <div style={styles.uploadAlertBlue}>
+                      <RefreshCw size={14} className="spin" style={{ marginRight: 6 }} />
+                      <span>{uploadMessage}</span>
+                    </div>
+                  )}
+
+                  {uploadStatus === 'success' && (
+                    <div style={styles.uploadAlertGreen}>
+                      <FileCheck size={16} color="#4ade80" style={{ marginRight: 8, flexShrink: 0 }} />
+                      <div>
+                        <strong>{currentFile?.name}</strong>
+                        <div>{uploadMessage}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {uploadStatus === 'error' && (
+                    <div style={styles.uploadAlertRed}>
+                      <XCircle size={16} color="#f87171" style={{ marginRight: 8, flexShrink: 0 }} />
+                      <div>{uploadMessage}</div>
+                    </div>
+                  )}
                 </div>
 
-                <div style={{ backgroundColor: '#fff', padding: '24px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                  <h3 style={{ fontSize: '1.05rem', fontWeight: '700', margin: '0 0 6px 0' }}>Supporting documents</h3>
-                  <p style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '14px' }}>Add rate confirmation or invoice. PDF, PNG, or JPG up to 5MB.</p>
-                  <label style={{ display: 'block', border: '2px dashed #cbd5e1', borderRadius: '8px', padding: '20px 12px', textAlign: 'center', cursor: 'pointer', backgroundColor: '#f8fafc' }}>
-                    <Upload size={24} color="#64748b" style={{ margin: '0 auto 6px auto' }} />
-                    <div style={{ fontSize: '0.8rem', fontWeight: '600', color: '#0284c7' }}>Browse files</div>
-                    <input type="file" onChange={handleFileUpload} accept=".pdf,.png,.jpg,.jpeg" style={{ display: 'none' }} />
-                  </label>
-                  {uploadStatus && (
-                    <div style={{ marginTop: '10px', fontSize: '0.8rem', color: uploadStatus.includes('Invalid') || uploadStatus.includes('exceeds') ? '#ef4444' : '#15803d', fontWeight: '500' }}>
-                      {uploadStatus}
+                {/* 2. Auditor Decision */}
+                <div style={styles.card}>
+                  <h3 style={styles.cardTitle}>Auditor Decision</h3>
+                  <p style={styles.cardSubtitle}>
+                    Approve invoice for accounts payable payment or initiate automated dispute documentation.
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <button
+                      onClick={handleApproveInvoice}
+                      style={{
+                        ...styles.btnDecision,
+                        ...(auditDecision === 'approved' ? styles.btnApprovedActive : styles.btnApproveDefault)
+                      }}
+                    >
+                      <CheckCircle2 size={16} style={{ marginRight: 6 }} />
+                      Approve Invoice as Invoiced ($2,425.00)
+                    </button>
+
+                    <button
+                      onClick={handleGenerateDispute}
+                      style={{
+                        ...styles.btnDecision,
+                        ...(auditDecision === 'disputed' ? styles.btnDisputedActive : styles.btnDisputeDefault)
+                      }}
+                    >
+                      <AlertTriangle size={16} style={{ marginRight: 6 }} />
+                      Dispute Flagged Charges (Generate Notice)
+                    </button>
+                  </div>
+
+                  {auditDecision === 'disputed' && (
+                    <div style={styles.disputeReadyBanner}>
+                      <span style={{ color: '#f87171', fontWeight: 600 }}>Notice ready in Reports tab</span>
+                      <button 
+                        onClick={() => setActiveTab('dispute')}
+                        style={styles.btnViewNotice}
+                      >
+                        View Notice <ArrowRight size={14} style={{ marginLeft: 4 }} />
+                      </button>
                     </div>
                   )}
                 </div>
               </div>
             </div>
           </div>
-        ) : (
-          /* Dispute Letter View */
-          <div style={{ backgroundColor: '#fff', padding: '32px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <div>
-                <h2 style={{ fontSize: '1.25rem', fontWeight: '800', margin: 0 }}>Automated Audit Defense Letter</h2>
-                <p style={{ fontSize: '0.85rem', color: '#64748b', margin: '4px 0 0 0' }}>Ready to dispatch to {auditData.carrier}</p>
+        )}
+
+        {/* Dispute Reports Tab */}
+        {activeTab === 'dispute' && (
+          <div style={styles.disputeContainer}>
+            {!isDisputeGenerated ? (
+              <div style={styles.emptyStateCard}>
+                <div style={styles.emptyIconBox}>
+                  <FileText size={32} color="#64748b" />
+                </div>
+                <h3 style={styles.emptyTitle}>No Active Dispute Notice Generated</h3>
+                <p style={styles.emptySubtitle}>
+                  Dispute defense documentation is generated dynamically when flagged charges are confirmed in the Audit Workspace.
+                </p>
+                <button
+                  onClick={() => setActiveTab('audit')}
+                  style={styles.btnReturnAudit}
+                >
+                  Return to Audit Workspace <ArrowRight size={14} style={{ marginLeft: 6 }} />
+                </button>
               </div>
-              <button 
-                onClick={copyToClipboard}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#0284c7', color: '#fff', fontWeight: '600', cursor: 'pointer', fontSize: '0.85rem' }}
-              >
-                {copied ? <Check size={16} /> : <Copy size={16} />}
-                {copied ? 'Copied to Clipboard' : 'Copy Defense Letter'}
-              </button>
-            </div>
-            <pre style={{ backgroundColor: '#f8fafc', padding: '20px', borderRadius: '8px', border: '1px solid #e2e8f0', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.85rem', lineHeight: '1.6' }}>
-              {defenseLetter}
-            </pre>
+            ) : (
+              <div style={styles.card}>
+                <div style={styles.cardHeaderFlex}>
+                  <div>
+                    <span style={styles.disputePillTop}>DISPUTE NOTICE READY</span>
+                    <h2 style={styles.cardTitle}>Carrier Audit Defense Notice - Load #{loadData.loadId}</h2>
+                  </div>
+
+                  <button onClick={handleCopyNotice} style={styles.copyBtn}>
+                    {copiedNotice ? (
+                      <>
+                        <Check size={14} color="#4ade80" style={{ marginRight: 6 }} />
+                        <span style={{ color: '#4ade80' }}>Copied to Clipboard</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={14} style={{ marginRight: 6 }} />
+                        <span>Copy Defense Notice</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div style={styles.letterBox}>
+{`DISPUTE DEFENSE NOTICE - CONTRACT RATE VARIANCE
+Date: November 11, 2026
+Carrier: ${loadData.carrier}
+Load Reference: ${loadData.loadId}
+Routing: ${loadData.origin} to ${loadData.destination}
+
+SUMMARY OF AUDIT FINDINGS:
+- Agreed Contract Baseline: $${contractTotal.toFixed(2)}
+- Invoiced Freight Total:   $${billedTotal.toFixed(2)}
+- Disputed Net Variance:    +$${varianceTotal.toFixed(2)}
+
+ITEMIZED RECONCILIATION BREAKDOWN:
+1. Linehaul:
+   - Agreed: $1,800.00 | Invoiced: $1,800.00 | Status: MATCH (Approved)
+
+2. Fuel Surcharge:
+   - Agreed: $350.00 | Invoiced: $375.00 | Status: +$25.00 UNAPPROVED VARIANCE
+   - Finding: Surcharge exceeds contractual DOE fuel matrix index on dispatch date.
+
+3. Dock Detention:
+   - Agreed: $0.00 | Invoiced: $250.00 | Status: +$250.00 UNAUTHORIZED ACCESSORIAL
+   - Finding: No signed or electronic in/out gate log provided by facility to validate detention time.
+
+PAYMENT DETERMINATION:
+Approved settlement payment has been scheduled for $${contractTotal.toFixed(2)}.
+Disputed variance of $${varianceTotal.toFixed(2)} has been deducted per Section 4 of Carrier Agreement.
+
+Remit all audit inquiries or time-stamped facility logs to freight-audit@logiclear.ai.`}
+                </div>
+
+                <div style={styles.letterFooter}>
+                  <span>Target recipient: <strong>apex-billing@apexlogistics.com</strong></span>
+                  <button 
+                    onClick={() => {
+                      setIsDisputeGenerated(false);
+                      setAuditDecision('pending');
+                      setActiveTab('audit');
+                    }}
+                    style={styles.revokeLink}
+                  >
+                    Revoke Dispute &amp; Return to Audit
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </main>
+
+      {/* Footer */}
+      <footer style={styles.footer}>
+        LogiClear AI • AIML-515 AI Integration Capstone • Indiana Wesleyan University
+      </footer>
     </div>
   );
 }
+
+// Complete inline design system ensuring 100% styled output independent of Tailwind
+const styles = {
+  container: {
+    minHeight: '100vh',
+    backgroundColor: '#020617', // Slate 950
+    color: '#f8fafc',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    display: 'flex',
+    flexDirection: 'column'
+  },
+  header: {
+    backgroundColor: '#0f172a',
+    borderBottom: '1px solid #1e293b',
+    padding: '0 24px'
+  },
+  headerInner: {
+    maxWidth: '1280px',
+    margin: '0 auto',
+    height: '68px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  brandRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px'
+  },
+  logoBox: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '8px',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    border: '1px solid rgba(56, 189, 248, 0.25)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  brandSubtitle: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#38bdf8',
+    letterSpacing: '0.08em',
+    display: 'block'
+  },
+  brandTitle: {
+    fontSize: '16px',
+    fontWeight: '700',
+    color: '#ffffff',
+    margin: 0
+  },
+  metricsGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '20px'
+  },
+  metricItem: {
+    display: 'flex',
+    flexDirection: 'column'
+  },
+  metricLabel: {
+    fontSize: '11px',
+    color: '#94a3b8'
+  },
+  metricVal: {
+    fontSize: '15px',
+    fontWeight: '700',
+    color: '#f1f5f9'
+  },
+  metricDivider: {
+    width: '1px',
+    height: '24px',
+    backgroundColor: '#334155'
+  },
+  tabsBar: {
+    backgroundColor: '#0b1329',
+    borderBottom: '1px solid #1e293b',
+    padding: '0 24px'
+  },
+  tabsInner: {
+    maxWidth: '1280px',
+    margin: '0 auto',
+    display: 'flex',
+    gap: '32px'
+  },
+  tabButton: {
+    background: 'none',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    color: '#94a3b8',
+    padding: '14px 4px',
+    fontSize: '14px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    position: 'relative'
+  },
+  tabButtonActive: {
+    color: '#38bdf8',
+    borderBottom: '2px solid #38bdf8'
+  },
+  badgeDot: {
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    backgroundColor: '#f87171',
+    marginLeft: '6px'
+  },
+  main: {
+    maxWidth: '1280px',
+    margin: '0 auto',
+    padding: '28px 24px',
+    flex: 1,
+    width: '100%',
+    boxSizing: 'border-box'
+  },
+  columnStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px'
+  },
+  cardHeaderBanner: {
+    backgroundColor: '#0f172a',
+    border: '1px solid #1e293b',
+    borderRadius: '12px',
+    padding: '18px 24px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  loadSub: {
+    fontSize: '10px',
+    fontWeight: '700',
+    color: '#94a3b8',
+    letterSpacing: '0.08em'
+  },
+  loadMainRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginTop: '2px'
+  },
+  loadTitle: {
+    fontSize: '20px',
+    fontWeight: '700',
+    color: '#f8fafc',
+    margin: 0
+  },
+  carrierName: {
+    fontSize: '14px',
+    color: '#94a3b8'
+  },
+  routeText: {
+    fontSize: '12px',
+    color: '#64748b',
+    marginTop: '4px'
+  },
+  statusPillAmber: {
+    backgroundColor: 'rgba(251, 191, 36, 0.1)',
+    color: '#fbbf24',
+    border: '1px solid rgba(251, 191, 36, 0.25)',
+    padding: '6px 14px',
+    borderRadius: '999px',
+    fontSize: '12px',
+    fontWeight: '600',
+    display: 'inline-flex',
+    alignItems: 'center'
+  },
+  statusPillGreen: {
+    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    color: '#4ade80',
+    border: '1px solid rgba(74, 222, 128, 0.25)',
+    padding: '6px 14px',
+    borderRadius: '999px',
+    fontSize: '12px',
+    fontWeight: '600',
+    display: 'inline-flex',
+    alignItems: 'center'
+  },
+  statusPillRed: {
+    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+    color: '#f87171',
+    border: '1px solid rgba(248, 113, 113, 0.25)',
+    padding: '6px 14px',
+    borderRadius: '999px',
+    fontSize: '12px',
+    fontWeight: '600',
+    display: 'inline-flex',
+    alignItems: 'center'
+  },
+  splitGrid: {
+    display: 'grid',
+    gridTemplateColumns: '2fr 1fr',
+    gap: '24px'
+  },
+  card: {
+    backgroundColor: '#0f172a',
+    border: '1px solid #1e293b',
+    borderRadius: '12px',
+    padding: '22px'
+  },
+  cardHeaderFlex: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: '16px'
+  },
+  cardTitle: {
+    fontSize: '15px',
+    fontWeight: '700',
+    color: '#f8fafc',
+    margin: 0
+  },
+  cardSubtitle: {
+    fontSize: '12px',
+    color: '#94a3b8',
+    margin: '4px 0 0 0'
+  },
+  resetBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#94a3b8',
+    fontSize: '11px',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center'
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    marginTop: '6px'
+  },
+  tableHeaderRow: {
+    borderBottom: '1px solid #1e293b'
+  },
+  th: {
+    fontSize: '11px',
+    fontWeight: '700',
+    color: '#64748b',
+    padding: '10px 8px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    textAlign: 'left'
+  },
+  tr: {
+    borderBottom: '1px solid rgba(30, 41, 59, 0.6)'
+  },
+  td: {
+    padding: '12px 8px',
+    fontSize: '13px',
+    color: '#f8fafc'
+  },
+  tdDesc: {
+    padding: '12px 8px',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#f1f5f9'
+  },
+  tdMono: {
+    padding: '12px 8px',
+    fontSize: '13px',
+    fontFamily: 'monospace',
+    textAlign: 'right',
+    color: '#cbd5e1'
+  },
+  pillSmallAmber: {
+    backgroundColor: 'rgba(251, 191, 36, 0.1)',
+    color: '#fbbf24',
+    border: '1px solid rgba(251, 191, 36, 0.25)',
+    padding: '3px 8px',
+    borderRadius: '4px',
+    fontSize: '11px',
+    fontWeight: '600'
+  },
+  pillSmallGreen: {
+    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    color: '#4ade80',
+    border: '1px solid rgba(74, 222, 128, 0.25)',
+    padding: '3px 8px',
+    borderRadius: '4px',
+    fontSize: '11px',
+    fontWeight: '600'
+  },
+  tfootRow: {
+    borderTop: '2px solid #334155'
+  },
+  tf: {
+    padding: '14px 8px',
+    fontSize: '14px',
+    fontWeight: '700',
+    color: '#ffffff'
+  },
+  noteBox: {
+    marginTop: '16px',
+    backgroundColor: '#020617',
+    border: '1px solid #1e293b',
+    borderRadius: '8px',
+    padding: '12px',
+    fontSize: '11px',
+    color: '#94a3b8',
+    display: 'flex',
+    alignItems: 'flex-start',
+    lineHeight: '1.5'
+  },
+  sidebarStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px'
+  },
+  ingestTag: {
+    fontSize: '10px',
+    fontWeight: '700',
+    color: '#38bdf8',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    padding: '2px 6px',
+    borderRadius: '4px'
+  },
+  dropZone: {
+    border: '2px dashed #334155',
+    borderRadius: '10px',
+    padding: '24px 16px',
+    textAlign: 'center',
+    cursor: 'pointer',
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    marginTop: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center'
+  },
+  dropIconBox: {
+    width: '42px',
+    height: '42px',
+    borderRadius: '50%',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: '8px'
+  },
+  dropMainText: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#f8fafc'
+  },
+  dropSubText: {
+    fontSize: '11px',
+    color: '#64748b',
+    marginTop: '2px'
+  },
+  uploadAlertBlue: {
+    marginTop: '12px',
+    padding: '10px 12px',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+    border: '1px solid rgba(56, 189, 248, 0.25)',
+    borderRadius: '6px',
+    fontSize: '12px',
+    color: '#38bdf8',
+    display: 'flex',
+    alignItems: 'center'
+  },
+  uploadAlertGreen: {
+    marginTop: '12px',
+    padding: '10px 12px',
+    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    border: '1px solid rgba(74, 222, 128, 0.25)',
+    borderRadius: '6px',
+    fontSize: '12px',
+    color: '#4ade80',
+    display: 'flex',
+    alignItems: 'flex-start'
+  },
+  uploadAlertRed: {
+    marginTop: '12px',
+    padding: '10px 12px',
+    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+    border: '1px solid rgba(248, 113, 113, 0.25)',
+    borderRadius: '6px',
+    fontSize: '12px',
+    color: '#f87171',
+    display: 'flex',
+    alignItems: 'flex-start'
+  },
+  btnDecision: {
+    padding: '11px 16px',
+    borderRadius: '8px',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    border: 'none',
+    transition: '0.15s ease'
+  },
+  btnApproveDefault: {
+    backgroundColor: 'rgba(74, 222, 128, 0.1)',
+    color: '#4ade80',
+    border: '1px solid rgba(74, 222, 128, 0.25)'
+  },
+  btnApprovedActive: {
+    backgroundColor: '#16a34a',
+    color: '#ffffff'
+  },
+  btnDisputeDefault: {
+    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+    color: '#f87171',
+    border: '1px solid rgba(248, 113, 113, 0.25)'
+  },
+  btnDisputedActive: {
+    backgroundColor: '#dc2626',
+    color: '#ffffff'
+  },
+  disputeReadyBanner: {
+    marginTop: '14px',
+    paddingTop: '12px',
+    borderTop: '1px solid #1e293b',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontSize: '12px'
+  },
+  btnViewNotice: {
+    background: 'none',
+    border: 'none',
+    color: '#38bdf8',
+    fontWeight: '700',
+    fontSize: '12px',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center'
+  },
+  disputeContainer: {
+    maxWidth: '900px',
+    margin: '0 auto'
+  },
+  emptyStateCard: {
+    backgroundColor: '#0f172a',
+    border: '1px solid #1e293b',
+    borderRadius: '12px',
+    padding: '56px 24px',
+    textAlign: 'center'
+  },
+  emptyIconBox: {
+    width: '56px',
+    height: '56px',
+    borderRadius: '50%',
+    backgroundColor: '#1e293b',
+    margin: '0 auto 16px auto',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  emptyTitle: {
+    fontSize: '16px',
+    fontWeight: '700',
+    color: '#f8fafc',
+    margin: '0 0 6px 0'
+  },
+  emptySubtitle: {
+    fontSize: '13px',
+    color: '#94a3b8',
+    maxWidth: '440px',
+    margin: '0 auto 20px auto',
+    lineHeight: '1.5'
+  },
+  btnReturnAudit: {
+    backgroundColor: '#0284c7',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: '8px',
+    padding: '10px 18px',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center'
+  },
+  disputePillTop: {
+    fontSize: '10px',
+    fontWeight: '700',
+    color: '#f87171',
+    letterSpacing: '0.08em',
+    display: 'block'
+  },
+  copyBtn: {
+    backgroundColor: '#1e293b',
+    color: '#f8fafc',
+    border: '1px solid #334155',
+    borderRadius: '6px',
+    padding: '8px 14px',
+    fontSize: '12px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center'
+  },
+  letterBox: {
+    backgroundColor: '#020617',
+    border: '1px solid #1e293b',
+    borderRadius: '8px',
+    padding: '20px',
+    fontFamily: 'monospace',
+    fontSize: '12px',
+    color: '#e2e8f0',
+    lineHeight: '1.6',
+    whiteSpace: 'pre-line',
+    userSelect: 'all',
+    marginTop: '12px'
+  },
+  letterFooter: {
+    marginTop: '14px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontSize: '12px',
+    color: '#94a3b8'
+  },
+  revokeLink: {
+    background: 'none',
+    border: 'none',
+    color: '#f87171',
+    textDecoration: 'underline',
+    fontSize: '12px',
+    cursor: 'pointer'
+  },
+  footer: {
+    borderTop: '1px solid #1e293b',
+    backgroundColor: '#0b1329',
+    padding: '14px',
+    textAlign: 'center',
+    fontSize: '11px',
+    color: '#64748b'
+  }
+};
