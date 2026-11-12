@@ -23,6 +23,13 @@ export default function App() {
   const [auditDecision, setAuditDecision] = useState('pending'); // 'pending' | 'approved' | 'disputed'
   const fileInputRef = useRef(null);
 
+  // Top-level KPI counters that dynamically increment on new uploads
+  const [metrics, setMetrics] = useState({
+    loadsAudited: 1284,
+    activeDiscrepancies: 38,
+    flaggedVariance: 275.0
+  });
+
   // Active load state
   const [loadData, setLoadData] = useState({
     loadId: 'LC-9482',
@@ -64,14 +71,47 @@ export default function App() {
 
     setCurrentFile(file);
     setUploadStatus('uploading');
-    setUploadMessage(`Ingesting ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`);
+    setUploadMessage(`Extracting & auditing ${file.name} (${(file.size / 1024).toFixed(1)} KB)...`);
 
     setTimeout(() => {
+      // Generate a realistic new audit scenario derived from the uploaded file so the user sees immediate, tangible table & KPI updates
+      const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[_-]/g, " ");
+      const randomLoadNum = Math.floor(1000 + Math.random() * 8999);
+      const isSecondUpload = loadData.loadId !== 'LC-9482';
+
+      const newCharges = isSecondUpload
+        ? [
+            { id: 1, name: 'Linehaul Base Rate', contract: 2200.0, billed: 2200.0, status: 'within_tolerance' },
+            { id: 2, name: 'Fuel Surcharge (DOE)', contract: 410.0, billed: 445.0, status: 'flagged' },
+            { id: 3, name: 'Layover / Lumper Fee', contract: 0.0, billed: 175.0, status: 'flagged' },
+          ]
+        : [
+            { id: 1, name: 'Linehaul Base Rate', contract: 1950.0, billed: 1950.0, status: 'within_tolerance' },
+            { id: 2, name: 'Fuel Surcharge (DOE)', contract: 380.0, billed: 415.0, status: 'flagged' },
+            { id: 3, name: 'Unauthorized Detention', contract: 0.0, billed: 300.0, status: 'flagged' },
+          ];
+
+      const newVariance = newCharges.reduce((acc, c) => acc + (c.billed - c.contract), 0);
+
+      setLoadData({
+        loadId: `LC-${randomLoadNum}`,
+        carrier: cleanName.length > 2 ? `${cleanName.slice(0, 22)} Freight` : 'SwiftLine Carriers LLC',
+        origin: isSecondUpload ? 'Chicago, IL' : 'Savannah, GA',
+        destination: isSecondUpload ? 'Denver, CO' : 'Nashville, TN',
+        charges: newCharges
+      });
+
+      setMetrics((prev) => ({
+        loadsAudited: prev.loadsAudited + 1,
+        activeDiscrepancies: prev.activeDiscrepancies + 2,
+        flaggedVariance: newVariance
+      }));
+
       setUploadStatus('success');
-      setUploadMessage(`Successfully parsed ${file.name}. Line items reconciled against contracted baselines.`);
+      setUploadMessage(`Audited ${file.name} → Loaded #LC-${randomLoadNum} into workspace (+$${newVariance.toFixed(2)} variance detected).`);
       setAuditDecision('pending');
       setIsDisputeGenerated(false);
-    }, 900);
+    }, 800);
   };
 
   const triggerFileInput = () => {
@@ -100,8 +140,10 @@ Carrier Invoiced Total: $${billedTotal.toFixed(2)}
 Net Discrepancy Flagged: +$${varianceTotal.toFixed(2)}
 
 ITEMIZED VARIANCE DETAILS:
-- Fuel Surcharge: Agreed $${loadData.charges[1].contract.toFixed(2)} vs Billed $${loadData.charges[1].billed.toFixed(2)} (+$${(loadData.charges[1].billed - loadData.charges[1].contract).toFixed(2)} unapproved variance)
-- Detention: Agreed $${loadData.charges[2].contract.toFixed(2)} vs Billed $${loadData.charges[2].billed.toFixed(2)} (+$${(loadData.charges[2].billed - loadData.charges[2].contract).toFixed(2)} unauthorized accessorial)
+${loadData.charges
+  .filter((c) => c.status === 'flagged')
+  .map((c) => `- ${c.name}: Agreed $${c.contract.toFixed(2)} vs Billed $${c.billed.toFixed(2)} (+$${(c.billed - c.contract).toFixed(2)} unapproved variance)`)
+  .join('\n')}
 
 RESOLUTION ACTION:
 Payment approved strictly for the contracted total of $${contractTotal.toFixed(2)}. Invoiced surcharges exceeding 1% baseline variance have been deducted. Please remit corrected billing.`;
@@ -129,17 +171,17 @@ Payment approved strictly for the contracted total of $${contractTotal.toFixed(2
           <div style={styles.metricsGroup}>
             <div style={styles.metricItem}>
               <span style={styles.metricLabel}>Loads Audited</span>
-              <span style={styles.metricVal}>1,284</span>
+              <span style={styles.metricVal}>{metrics.loadsAudited.toLocaleString()}</span>
             </div>
             <div style={styles.metricDivider}></div>
             <div style={styles.metricItem}>
               <span style={styles.metricLabel}>Active Discrepancies</span>
-              <span style={{ ...styles.metricVal, color: '#fbbf24' }}>38</span>
+              <span style={{ ...styles.metricVal, color: '#fbbf24' }}>{metrics.activeDiscrepancies}</span>
             </div>
             <div style={styles.metricDivider}></div>
             <div style={styles.metricItem}>
               <span style={styles.metricLabel}>Flagged Variance</span>
-              <span style={{ ...styles.metricVal, color: '#f87171' }}>+$275.00</span>
+              <span style={{ ...styles.metricVal, color: '#f87171' }}>+${metrics.flaggedVariance.toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -365,7 +407,7 @@ Payment approved strictly for the contracted total of $${contractTotal.toFixed(2
                       }}
                     >
                       <CheckCircle2 size={16} style={{ marginRight: 6 }} />
-                      Approve Invoice as Invoiced ($2,425.00)
+                      Approve Invoice as Invoiced (${billedTotal.toFixed(2)})
                     </button>
 
                     <button
@@ -452,15 +494,15 @@ SUMMARY OF AUDIT FINDINGS:
 - Disputed Net Variance:    +$${varianceTotal.toFixed(2)}
 
 ITEMIZED RECONCILIATION BREAKDOWN:
-1. Linehaul:
-   - Agreed: $1,800.00 | Invoiced: $1,800.00 | Status: MATCH (Approved)
+1. ${loadData.charges[0].name}:
+   - Agreed: $${loadData.charges[0].contract.toFixed(2)} | Invoiced: $${loadData.charges[0].billed.toFixed(2)} | Status: MATCH (Approved)
 
-2. Fuel Surcharge:
-   - Agreed: $350.00 | Invoiced: $375.00 | Status: +$25.00 UNAPPROVED VARIANCE
+2. ${loadData.charges[1].name}:
+   - Agreed: $${loadData.charges[1].contract.toFixed(2)} | Invoiced: $${loadData.charges[1].billed.toFixed(2)} | Status: +$${(loadData.charges[1].billed - loadData.charges[1].contract).toFixed(2)} UNAPPROVED VARIANCE
    - Finding: Surcharge exceeds contractual DOE fuel matrix index on dispatch date.
 
-3. Dock Detention:
-   - Agreed: $0.00 | Invoiced: $250.00 | Status: +$250.00 UNAUTHORIZED ACCESSORIAL
+3. ${loadData.charges[2].name}:
+   - Agreed: $${loadData.charges[2].contract.toFixed(2)} | Invoiced: $${loadData.charges[2].billed.toFixed(2)} | Status: +$${(loadData.charges[2].billed - loadData.charges[2].contract).toFixed(2)} UNAUTHORIZED ACCESSORIAL
    - Finding: No signed or electronic in/out gate log provided by facility to validate detention time.
 
 PAYMENT DETERMINATION:
